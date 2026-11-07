@@ -24,6 +24,7 @@ function writeBookings(bookings) {
 }
 
 app.get("/api/bookings", (_req, res) => {
+  res.set("Cache-Control", "no-store");
   res.json(readBookings());
 });
 

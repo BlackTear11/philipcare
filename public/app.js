@@ -6,7 +6,6 @@ const state = {
   selectedDate: null,
   selectedPeriod: null,
   error: "",
-  toast: "",
 };
 
 function todayISO() {
@@ -70,7 +69,7 @@ function timesFor(period) {
 }
 
 async function loadBookings() {
-  const res = await fetch("/api/bookings");
+  const res = await fetch("/api/bookings", { cache: "no-store" });
   if (!res.ok) throw new Error("Could not load bookings.");
   state.bookings = await res.json();
 }
@@ -79,6 +78,7 @@ async function createBooking({ date, period, name, time }) {
   const res = await fetch("/api/bookings", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
+    cache: "no-store",
     body: JSON.stringify({ date, period, name, time }),
   });
   const data = await res.json().catch(() => ({}));
@@ -87,9 +87,10 @@ async function createBooking({ date, period, name, time }) {
 }
 
 function go(view, extras = {}) {
-  Object.assign(state, extras, { view, error: state.error && extras.clearError === false ? state.error : "" });
-  if (extras.error !== undefined) state.error = extras.error;
-  if (extras.toast !== undefined) state.toast = extras.toast;
+  Object.assign(state, extras, {
+    view,
+    error: extras.error !== undefined ? extras.error : "",
+  });
   render();
 }
 
@@ -196,7 +197,6 @@ function renderCalendar() {
         <button class="linkish" data-action="home">Back</button>
       </div>
       <p class="hint">Swipe sideways to find a day, then tap anywhere on that day to book.</p>
-      ${state.toast ? `<p class="toast">${escapeHtml(state.toast)}</p>` : ""}
       <div class="calendar-scroller" id="calendar-scroller">${cards}</div>
     </section>
   `;
@@ -322,18 +322,16 @@ function wireInteractions() {
     el.addEventListener("click", async (e) => {
       const action = el.getAttribute("data-action");
       if (action === "home") {
-        state.toast = "";
         go("home");
       } else if (action === "howto") {
         go("howto");
       } else if (action === "book") {
-        state.error = "";
         try {
           await loadBookings();
           go("calendar");
+          scrollToDate(state.selectedDate);
         } catch (err) {
-          state.error = err.message;
-          go("home");
+          go("home", { error: err.message });
           alert(err.message);
         }
       } else if (action === "pick-day") {
@@ -342,8 +340,7 @@ function wireInteractions() {
         go("day");
       } else if (action === "pick-period") {
         state.selectedPeriod = el.getAttribute("data-period");
-        state.error = "";
-        go("form");
+        go("form", { error: "" });
       }
     });
   });
@@ -358,23 +355,37 @@ function wireInteractions() {
       const data = new FormData(form);
       const name = String(data.get("name") || "").trim();
       const time = String(data.get("time") || "").trim();
+      const bookedDate = state.selectedDate;
       try {
-        await createBooking({
-          date: state.selectedDate,
+        const booking = await createBooking({
+          date: bookedDate,
           period: state.selectedPeriod,
           name,
           time,
         });
-        await loadBookings();
-        state.toast = `Booked: ${name} · ${time}`;
-        state.error = "";
+        try {
+          await loadBookings();
+        } catch {
+          // Keep the new booking visible even if refresh fails.
+        }
+        if (!state.bookings.some((b) => b.id === booking.id)) {
+          state.bookings = [...state.bookings, booking];
+        }
         go("calendar");
+        scrollToDate(bookedDate);
       } catch (err) {
         state.error = err.message;
         render();
       }
     });
   }
+}
+
+function scrollToDate(date) {
+  if (!date) return;
+  const scroller = document.getElementById("calendar-scroller");
+  const card = scroller && scroller.querySelector(`[data-date="${date}"]`);
+  if (card) card.scrollIntoView({ inline: "start", block: "nearest", behavior: "smooth" });
 }
 
 async function boot() {
