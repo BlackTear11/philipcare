@@ -4,7 +4,15 @@ const path = require("path");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const DATA_FILE = path.join(__dirname, "bookings.json");
+
+function bookingsFile() {
+  const configured = process.env.DATA_DIR;
+  if (configured) return path.join(configured, "bookings.json");
+  if (fs.existsSync("/var/data")) return path.join("/var/data", "bookings.json");
+  return path.join(__dirname, "bookings.json");
+}
+
+const DATA_FILE = bookingsFile();
 
 app.use(express.json());
 app.use(express.static(path.join(__dirname, "public")));
@@ -20,6 +28,7 @@ function readBookings() {
 }
 
 function writeBookings(bookings) {
+  fs.mkdirSync(path.dirname(DATA_FILE), { recursive: true });
   fs.writeFileSync(DATA_FILE, JSON.stringify(bookings, null, 2));
 }
 
@@ -61,10 +70,16 @@ app.post("/api/bookings", (req, res) => {
   };
 
   bookings.push(booking);
-  writeBookings(bookings);
+  try {
+    writeBookings(bookings);
+  } catch (err) {
+    console.error("Could not save bookings to", DATA_FILE, err);
+    return res.status(500).json({ error: "Could not save the visit. Please try again." });
+  }
   res.status(201).json(booking);
 });
 
 app.listen(PORT, () => {
   console.log(`Philip Visit Tracker running at http://localhost:${PORT}`);
+  console.log(`Bookings file: ${DATA_FILE}`);
 });

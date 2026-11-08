@@ -61,11 +61,35 @@ function bookingsFor(date, period) {
   return state.bookings.filter((b) => b.date === date && b.period === period);
 }
 
-function timesFor(period) {
+function allTimes(period) {
   if (period === "am") {
-    return ["8:00", "9:00", "10:00", "11:00"];
+    return ["8:00 am", "9:00 am", "10:00 am", "11:00 am"];
   }
-  return ["12:00", "13:00", "14:00", "15:00", "16:00", "17:00"];
+  return ["12:00 pm", "1:00 pm", "2:00 pm", "3:00 pm", "4:00 pm", "5:00 pm", "6:00 pm"];
+}
+
+function timeToMinutes(label) {
+  const match = String(label).trim().match(/^(\d{1,2}):(\d{2})\s*(am|pm)$/i);
+  if (!match) return null;
+  let hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  const suffix = match[3].toLowerCase();
+  if (suffix === "pm" && hours !== 12) hours += 12;
+  if (suffix === "am" && hours === 12) hours = 0;
+  return hours * 60 + minutes;
+}
+
+function slotStillOpen(date, label) {
+  if (date !== todayISO()) return true;
+  const start = timeToMinutes(label);
+  if (start == null) return true;
+  const now = new Date();
+  const nowMinutes = now.getHours() * 60 + now.getMinutes();
+  return nowMinutes < start + 60;
+}
+
+function availableTimes(date, period) {
+  return allTimes(period).filter((label) => slotStillOpen(date, label));
 }
 
 async function loadBookings() {
@@ -170,7 +194,7 @@ function renderCalendar() {
       const head = formatDayHead(date);
       const isToday = date === today ? " is-today" : "";
       return `
-        <article class="day-card${isToday}" data-action="pick-day" data-date="${date}" role="button" tabindex="0">
+        <button type="button" class="day-card${isToday}" data-action="pick-day" data-date="${date}">
           <div class="day-head">
             <span class="dow">${head.dow}</span>
             <span class="dom">${head.dom}</span>
@@ -185,7 +209,7 @@ function renderCalendar() {
               <div class="blocks">${renderBlocks(date, "pm")}</div>
             </div>
           </div>
-        </article>
+        </button>
       `;
     })
     .join("");
@@ -202,10 +226,20 @@ function renderCalendar() {
   `;
 }
 
+function periodSummary(date, period) {
+  const count = bookingsFor(date, period).length;
+  const times = availableTimes(date, period);
+  if (count >= 3) return "Full (3 visits)";
+  if (times.length === 0) return period === "am" ? "Morning has passed" : "Afternoon has passed";
+  const start = times[0].replace(":00", "");
+  const end = times[times.length - 1].replace(":00", "");
+  return `${start} – ${end} · ${3 - count} open`;
+}
+
 function renderDayChoice() {
   const date = state.selectedDate;
-  const amCount = bookingsFor(date, "am").length;
-  const pmCount = bookingsFor(date, "pm").length;
+  const amClosed = availableTimes(date, "am").length === 0 || bookingsFor(date, "am").length >= 3;
+  const pmClosed = availableTimes(date, "pm").length === 0 || bookingsFor(date, "pm").length >= 3;
 
   return `
     <section class="screen panel">
@@ -214,13 +248,13 @@ function renderDayChoice() {
         <button class="linkish" data-action="book">Back</button>
       </div>
       <div class="choice-list">
-        <button class="choice" data-action="pick-period" data-period="am" ${amCount >= 3 ? "disabled" : ""}>
+        <button class="choice" data-action="pick-period" data-period="am" ${amClosed ? "disabled" : ""}>
           <strong>Morning Visit</strong>
-          <span>${amCount >= 3 ? "Full (3 visits)" : "8:00 – 12:00 · " + (3 - amCount) + " open"}</span>
+          <span>${periodSummary(date, "am")}</span>
         </button>
-        <button class="choice" data-action="pick-period" data-period="pm" ${pmCount >= 3 ? "disabled" : ""}>
+        <button class="choice" data-action="pick-period" data-period="pm" ${pmClosed ? "disabled" : ""}>
           <strong>Afternoon Visit</strong>
-          <span>${pmCount >= 3 ? "Full (3 visits)" : "12:00 – 18:00 · " + (3 - pmCount) + " open"}</span>
+          <span>${periodSummary(date, "pm")}</span>
         </button>
       </div>
       <div class="footer-actions">
@@ -232,7 +266,7 @@ function renderDayChoice() {
 
 function renderForm() {
   const periodLabel = state.selectedPeriod === "am" ? "Morning" : "Afternoon";
-  const options = timesFor(state.selectedPeriod)
+  const options = availableTimes(state.selectedDate, state.selectedPeriod)
     .map((t) => `<option value="${t}">${t}</option>`)
     .join("");
 
@@ -272,51 +306,6 @@ function render() {
   wireInteractions();
 }
 
-function enableDragScroll(scroller) {
-  let isDown = false;
-  let startX = 0;
-  let scrollLeft = 0;
-  let moved = false;
-
-  scroller.addEventListener("pointerdown", (e) => {
-    if (e.pointerType === "touch") return;
-    if (e.target.closest("button, a, input, select")) return;
-    isDown = true;
-    moved = false;
-    startX = e.clientX;
-    scrollLeft = scroller.scrollLeft;
-  });
-
-  scroller.addEventListener("pointermove", (e) => {
-    if (!isDown) return;
-    const dx = e.clientX - startX;
-    if (Math.abs(dx) <= 8) return;
-    moved = true;
-    scroller.classList.add("dragging");
-    scroller.scrollLeft = scrollLeft - dx;
-  });
-
-  const end = () => {
-    isDown = false;
-    scroller.classList.remove("dragging");
-  };
-
-  scroller.addEventListener("pointerup", end);
-  scroller.addEventListener("pointercancel", end);
-  scroller.addEventListener("pointerleave", end);
-
-  scroller.addEventListener(
-    "click",
-    (e) => {
-      if (!moved) return;
-      e.preventDefault();
-      e.stopPropagation();
-      moved = false;
-    },
-    true
-  );
-}
-
 function wireInteractions() {
   app.querySelectorAll("[data-action]").forEach((el) => {
     el.addEventListener("click", async (e) => {
@@ -344,9 +333,6 @@ function wireInteractions() {
       }
     });
   });
-
-  const scroller = document.getElementById("calendar-scroller");
-  if (scroller) enableDragScroll(scroller);
 
   const form = document.getElementById("booking-form");
   if (form) {
